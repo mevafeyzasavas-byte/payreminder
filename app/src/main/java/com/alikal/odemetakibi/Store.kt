@@ -45,4 +45,18 @@ object Store {
 
     /** Bu ay hatırlatma günü geldi mi? */
     fun isActive(c: Context) = Calendar.getInstance().get(Calendar.DAY_OF_MONTH) >= payDay(c)
+
+    const val DEFAULT_DB = "https://takvim-82a3b-default-rtdb.europe-west1.firebasedatabase.app"
+
+    fun monthKey() = month()
+    fun dbUrl(c: Context) = p(c).getString("db", DEFAULT_DB) ?: DEFAULT_DB
+    fun setDbUrl(c: Context, v: String) = p(c).edit().putString("db", v).apply()
+    fun dirty(c: Context) = p(c).getBoolean("dirty", false)
+    fun setDirty(c: Context, v: Boolean) = p(c).edit().putBoolean("dirty", v).apply()
+    fun online(c: Context) = p(c).getBoolean("online", true)
+    fun setOnline(c: Context, v: Boolean) = p(c).edit().putBoolean("online", v).apply()
+
+    fun replacePaid(c: Context, s: Set<Int>) {
+        p(c).edit().putString("month", month()).putString("paid", s.joinToString(",")).apply()
+    }
 }

@@ -7,8 +7,19 @@ import android.widget.Toast
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        if (Store.isActive(c) && Store.pending(c).isNotEmpty()) Notifier.show(c)
-        Scheduler.schedule(c)
+        val app = c.applicationContext
+        val pr = goAsync()
+        Thread {
+            try {
+                // Başka cihazdan ödendi işaretlendiyse burada tekrar hatırlatma
+                Sync.syncNow(app)
+                if (Store.isActive(app) && Store.pending(app).isNotEmpty()) Notifier.show(app)
+                else Notifier.cancel(app)
+            } finally {
+                Scheduler.schedule(app)
+                pr.finish()
+            }
+        }.start()
     }
 }
 
@@ -16,15 +27,20 @@ class ActionReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
         val idx = i.getIntExtra("item", -1)
         if (idx !in Store.ITEMS.indices) return
-        Store.setPaid(c, idx, true)
-        Scheduler.schedule(c)
-        if (Store.pending(c).isEmpty()) {
-            Notifier.cancel(c)
-            Toast.makeText(c, "Bu ayın tüm ödemeleri tamamlandı 🎉", Toast.LENGTH_SHORT).show()
+        val app = c.applicationContext
+        Store.setPaid(app, idx, true)
+        Scheduler.schedule(app)
+        if (Store.pending(app).isEmpty()) {
+            Notifier.cancel(app)
+            Toast.makeText(app, "Bu ayın tüm ödemeleri tamamlandı 🎉", Toast.LENGTH_SHORT).show()
         } else {
-            Notifier.show(c, silent = true)
-            Toast.makeText(c, "${Store.ITEMS[idx]} ödendi", Toast.LENGTH_SHORT).show()
+            Notifier.show(app, silent = true)
+            Toast.makeText(app, "${Store.ITEMS[idx]} ödendi", Toast.LENGTH_SHORT).show()
         }
+        val pr = goAsync()
+        Thread {
+            try { Sync.pushOne(app, idx, true) } finally { pr.finish() }
+        }.start()
     }
 }
 

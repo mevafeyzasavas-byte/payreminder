@@ -13,6 +13,8 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -64,18 +66,53 @@ class MainActivity : Activity() {
         ) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+    private val poll = object : Runnable {
+        override fun run() {
+            doSync()
+            handler.postDelayed(this, 15000)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         Scheduler.schedule(this)
         render()
         askExactAlarm()
+        handler.post(poll) // açıkken 15 sn'de bir buluttan güncel durumu çeker
+    }
+
+    override fun onPause() {
+        super.onPause()
+        handler.removeCallbacks(poll)
+    }
+
+    private fun doSync() {
+        val app = applicationContext
+        Thread {
+            val changed = Sync.syncNow(app)
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                if (changed) {
+                    if (Store.pending(this).isEmpty()) Notifier.cancel(this)
+                    Scheduler.schedule(this)
+                }
+                render()
+            }
+        }.start()
     }
 
     private fun toggle(i: Int) {
-        Store.setPaid(this, i, i !in Store.paid(this))
+        val v = i !in Store.paid(this)
+        Store.setPaid(this, i, v)
         if (Store.pending(this).isEmpty()) Notifier.cancel(this)
         Scheduler.schedule(this)
         render()
+        val app = applicationContext
+        Thread {
+            Sync.pushOne(app, i, v)
+            runOnUiThread { if (!isFinishing) render() }
+        }.start()
     }
 
     private fun tv(text: String, size: Float, color: Int, bold: Boolean = false) =
@@ -150,6 +187,10 @@ class MainActivity : Activity() {
             content.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
 
+        val cloud = if (Store.online(this)) "☁ Bulutla eşitlendi · diğer cihazlarda da aynı görünür"
+        else "☁ Çevrimdışı · bağlanınca otomatik eşitlenir"
+        content.addView(tv(cloud, 12f, if (Store.online(this)) GREEN else RED)
+            .apply { setPadding(0, dp(16), 0, 0) })
         content.addView(tv("Ödenmeyenler için her gün hatırlatılır. Satıra dokunarak ödendi işaretini aç/kapat.", 12f, MUTED)
             .apply { setPadding(0, dp(14), 0, 0) })
     }
@@ -183,6 +224,12 @@ class MainActivity : Activity() {
         val day = field("Hatırlatma başlangıç günü (1-28)", Store.payDay(this))
         val hour = field("Günlük hatırlatma saati (0-23)", Store.hour(this))
         val min = field("Dakika (0-59)", Store.minute(this))
+        box.addView(TextView(this).apply { text = "Firebase veritabanı adresi"; textSize = 13f; setPadding(0, dp(12), 0, 0) })
+        val db = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setText(Store.dbUrl(this@MainActivity)); textSize = 12f
+        }
+        box.addView(db)
         AlertDialog.Builder(this)
             .setTitle("Ayarlar")
             .setView(box)
@@ -190,12 +237,15 @@ class MainActivity : Activity() {
                 val d = day.text.toString().toIntOrNull() ?: 5
                 val h = hour.text.toString().toIntOrNull() ?: 9
                 val m = min.text.toString().toIntOrNull() ?: 0
-                if (d !in 1..28 || h !in 0..23 || m !in 0..59) {
+                val u = db.text.toString().trim()
+                if (d !in 1..28 || h !in 0..23 || m !in 0..59 || !u.startsWith("https://")) {
                     Toast.makeText(this, "Geçersiz değer, kaydedilmedi", Toast.LENGTH_LONG).show()
                 } else {
                     Store.saveSettings(this, d, h, m)
+                    Store.setDbUrl(this, u)
                     Scheduler.schedule(this)
                     render()
+                    doSync()
                 }
             }
             .setNegativeButton("Vazgeç", null).show()
